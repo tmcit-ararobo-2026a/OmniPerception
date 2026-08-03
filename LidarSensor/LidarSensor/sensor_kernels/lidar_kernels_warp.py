@@ -23,7 +23,7 @@ class LidarWarpKernels:
     ):
 
         env_id, cam_id, scan_line, point_index = wp.tid()
-        mesh = mesh_ids[0]
+        mesh = mesh_ids[env_id]
         lidar_position = lidar_pos_array[env_id, cam_id]
         # if env_id == 1 :
         #     wp.print(lidar_position)

@@ -267,7 +267,8 @@ class LidarSensor(BaseSensor):
         
         # Normalize and store
         normalized_rays = ray_vectors / torch.norm(ray_vectors, dim=2, keepdim=True)
-        self.ray_vectors = wp.from_torch(normalized_rays, dtype=wp.vec3)
+        ray_dirs_3d = normalized_rays.view(self.num_vertical_lines, self.num_horizontal_lines, 3)
+        self.ray_vectors = wp.from_torch(ray_dirs_3d, dtype=wp.vec3)
 
     def _generate_ray_angles(self):
         """Generate ray angles using the appropriate generator"""
@@ -313,9 +314,14 @@ class LidarSensor(BaseSensor):
         ray_vectors = torch.stack([x, y, z], dim=1)
         ray_vectors = ray_vectors.reshape(self.num_rays, 1, 3)
         normalized_rays = ray_vectors / torch.norm(ray_vectors, dim=2, keepdim=True)
+        ray_dirs_3d = normalized_rays.view(self.num_vertical_lines, self.num_horizontal_lines, 3)
         
-        # Update by recreating the warp array
-        self.ray_vectors = wp.from_torch(normalized_rays, dtype=wp.vec3)
+        # Rebind a new Warp array because the underlying pointer changed
+        self.ray_vectors = wp.from_torch(ray_dirs_3d, dtype=wp.vec3)
+
+        # Recreate the CUDA graph because the pointer has changed
+        self.graph = None
+        self.create_render_graph_pointcloud()
 
     def create_render_graph_pointcloud(self):
         """Create the warp computation graph for point cloud rendering"""
@@ -325,7 +331,10 @@ class LidarSensor(BaseSensor):
             self.graph = None  # Will use direct kernel launch
             return
         
-        # Temporarily disable CUDA error verification during graph capture
+        # Skip if tensor buffers are not yet prepared
+        if self.lidar_warp_tensor is None or self.local_dist is None:
+            return
+
         original_verify_cuda = getattr(wp.config, 'verify_cuda', False)
         if hasattr(wp.config, 'verify_cuda'):
             wp.config.verify_cuda = False
@@ -344,7 +353,7 @@ class LidarSensor(BaseSensor):
                         self.num_horizontal_lines,
                     ),
                     inputs=[
-                        self.mesh_ids,
+                        self.mesh_array,
                         self.lidar_positions,
                         self.lidar_quat_array,
                         self.height_scanner_ray_origins,
@@ -367,7 +376,7 @@ class LidarSensor(BaseSensor):
                         self.num_horizontal_lines,
                     ),
                     inputs=[
-                        self.mesh_ids,
+                        self.mesh_array,
                         self.lidar_positions,
                         self.lidar_quat_array,
                         self.ray_vectors,
@@ -390,6 +399,17 @@ class LidarSensor(BaseSensor):
 
     def init_tensors(self):
         """Initialize warp tensors for computation"""
+        if isinstance(self.mesh_ids, (int, float)):
+            # If a single integer is provided, create a tensor with num_envs copies
+            mesh_list = [int(self.mesh_ids)] * self.num_envs
+            self.mesh_array = wp.array(mesh_list, dtype=wp.uint64, device=self.device)
+        elif isinstance(self.mesh_ids, torch.Tensor):
+            self.mesh_array = wp.from_torch(self.mesh_ids.to(torch.uint64), dtype=wp.uint64)
+        elif isinstance(self.mesh_ids, wp.array):
+            self.mesh_array = self.mesh_ids
+        else:
+            self.mesh_array = wp.array(list(self.mesh_ids), dtype=wp.uint64, device=self.device)
+        
         self.lidar_positions = wp.from_torch(
             self.lidar_positions_tensor.view(self.num_envs, 1, 3), dtype=wp.vec3
         )
@@ -436,13 +456,21 @@ class LidarSensor(BaseSensor):
                 self.num_envs, self.num_sensors, -1,-1, -1
             )
             
-            self.height_scanner_ray_origins = wp.from_torch(ray_origins_expanded.view( self.num_envs, self.num_sensors, self.num_vertical_lines, self.num_horizontal_lines,-1), dtype=wp.vec3)
-            self.height_scanner_ray_directions = wp.from_torch(ray_directions_expanded.view( self.num_envs, self.num_sensors, self.num_vertical_lines, self.num_horizontal_lines,-1), dtype=wp.vec3)
+            self.height_scanner_ray_origins = wp.from_torch(
+                ray_origins_expanded.view(self.num_envs, self.num_sensors, self.num_vertical_lines, self.num_horizontal_lines, 3), 
+                dtype=wp.vec3
+            )
+            self.height_scanner_ray_directions = wp.from_torch(
+                ray_directions_expanded.view(self.num_envs, self.num_sensors, self.num_vertical_lines, self.num_horizontal_lines, 3), 
+                dtype=wp.vec3
+            )
 
     def capture(self):
         """Capture the render graph if not already created"""
         if self.graph is None:
             self.create_render_graph_pointcloud()
+
+    @staticmethod
     def tensor_indices_to_slice(idx: torch.Tensor):
         # expects 1-D int tensor
         idx = idx.to(dtype=torch.long)
@@ -521,7 +549,7 @@ class LidarSensor(BaseSensor):
                         self.num_horizontal_lines,
                     ),
                     inputs=[
-                        self.mesh_ids,
+                        self.mesh_array,
                         self.lidar_positions,
                         self.lidar_quat_array,
                         self.height_scanner_ray_origins,
@@ -544,7 +572,7 @@ class LidarSensor(BaseSensor):
                         self.num_horizontal_lines,
                     ),
                     inputs=[
-                        self.mesh_ids,
+                        self.mesh_array,
                         self.lidar_positions,
                         self.lidar_quat_array,
                         self.ray_vectors,
