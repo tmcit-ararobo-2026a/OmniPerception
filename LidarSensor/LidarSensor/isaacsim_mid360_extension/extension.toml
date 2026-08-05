@@ -1,0 +1,13 @@
+[package]
+name = "gn10.omniperception.mid360"
+version = "0.1.0"
+title = "OmniPerception Mid360"
+author = "Gento Aiba"
+summary = "Isaac Sim extension for Mid360 LiDAR integration"
+Categories = ["Physics", "Sensors"]
+
+[dependencies]
+# Add any required dependencies here
+
+[[python.module]]
+name = "omniperception.mid360"
