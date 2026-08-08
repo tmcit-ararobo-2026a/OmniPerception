@@ -48,6 +48,9 @@ class LidarWarpKernels:
                 pixels[env_id, cam_id, scan_line, point_index] = ray_origin + dist * ray_direction_world
             else:
                 pixels[env_id, cam_id, scan_line, point_index] = dist * ray_dir
+        else:
+            local_dist[env_id, cam_id, scan_line, point_index] = NO_HIT_RAY_VAL
+            pixels[env_id, cam_id, scan_line, point_index] = wp.vec3(0.0, 0.0, 0.0)
 
     @staticmethod
     @wp.kernel
