@@ -390,7 +390,7 @@ class LidarSensor(BaseSensor):
             
             self.graph = wp.capture_end(device=self.device)
             kernel_type = "height_scanner" if self.sensor_cfg.is_height_scanner else "regular"
-            print(f"Render graph created for {self.sensor_cfg.sensor_type.value} lidar ({kernel_type} kernel)")
+            # print(f"Render graph created for {self.sensor_cfg.sensor_type.value} lidar ({kernel_type} kernel)")
             
         finally:
             # Restore original CUDA verification setting
